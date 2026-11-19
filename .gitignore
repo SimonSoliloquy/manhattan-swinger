@@ -1,0 +1,4 @@
+data-raw/
+.vercel
+.env*
+.DS_Store
