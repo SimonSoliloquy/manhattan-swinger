@@ -81,7 +81,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
     <div class="races" id="raceList" hidden></div>
     <p class="how" id="howTouch">Hold to swing, let go to fly, tap to jump. The rope goes to the side you tilt the phone. Land anywhere and keep running.</p>
     <p class="how" id="howKeys">Hold the mouse button to swing, let go to fly, Space jumps. The rope goes to the side you steer with A and D. Land anywhere and keep running.</p>
-    <p class="by">by <a href="https://simonsoliloquy.com" target="_blank" rel="noopener">simonsoliloquy.com</a>. Building data from NYC Open Data.</p>
+    <p class="by">by <a href="https://simonsoliloquy.com" target="_blank" rel="noopener">simonsoliloquy.com</a>. Building data from NYC Open Data; colours, names and shops © OpenStreetMap contributors.</p>
   </div></div>
 
   <div class="screen" id="mapScreen" hidden>
@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19j';
+const VERSION = 'v2026-11-19k';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -207,6 +207,23 @@ function facade(lit) {
   return { map: tex(c), glow: tex(cg) };
 }
 const FAC = [facade(0.34), facade(0.22), facade(0.12)];
+// Masonry for the buildings OpenStreetMap gives a colour or material (brick, limestone, plaster...): a
+// light, neutral wall with punched windows, tinted per building by its colour (vertex colours).
+function masonry(lit) {
+  const [c, g] = canvas(256, 256), [cg, gg] = canvas(256, 256);
+  g.fillStyle = '#d4d0c8'; g.fillRect(0, 0, 256, 256); gg.fillStyle = '#000'; gg.fillRect(0, 0, 256, 256);
+  for (let j = 0; j < 8; j++) {
+    g.fillStyle = 'rgba(0,0,0,.12)'; g.fillRect(0, j * 32 + 29, 256, 3);               // a sill line each floor
+    for (let i = 0; i < 6; i++) {
+      const on = Math.random() < lit, col = YELLOWS[(Math.random() * YELLOWS.length) | 0], x = i * 42 + 10, y = j * 32 + 6;
+      g.fillStyle = on ? col : '#1a1e30'; g.fillRect(x, y, 20, 20);
+      if (on) { gg.globalAlpha = 0.6 + Math.random() * 0.4; gg.fillStyle = col; gg.fillRect(x, y, 20, 20); gg.globalAlpha = 1; }
+    }
+  }
+  return { map: tex(c), glow: tex(cg) };
+}
+const MASON = masonry(0.3);
+const masonryMat = new THREE.MeshPhongMaterial({ map: MASON.map, color: 0xb8b4c4, vertexColors: true, specular: 0x222233, shininess: 8, emissive: 0xffffff, emissiveMap: MASON.glow });
 const wallMats = FAC.map(f => new THREE.MeshPhongMaterial({ map: f.map, color: 0xc0ccff, specular: 0x8ea4ff, shininess: 60, emissive: 0xffffff, emissiveMap: f.glow }));
 const roofMat = new THREE.MeshPhongMaterial({ color: 0x1b2350, specular: 0x334080, shininess: 20 });
 const MATS = wallMats.map(w => [w, w, roofMat, roofMat, w, w]);
@@ -289,10 +306,12 @@ const beam = (() => {
 // around the camera and dropped behind it. Collisions, ropes and the camera use the outlines.
 // ============================================================================================
 const world = new THREE.Group(); scene.add(world);
-const CITY = { ready: false, b: [], grid: new Map(), cell: 32, tiles: new Map(), meshes: new Map(), meta: null, gh: null, gk: null };
+const CITY = { ready: false, b: [], grid: new Map(), cell: 32, tiles: new Map(), meshes: new Map(), meta: null, gh: null, gk: null, tint: new Map(), osm: null };
 const blinkers = [];
 async function loadCity() {
-  const [meta, buf] = await Promise.all([fetch('data/manhattan.json').then(r => r.json()), fetch('data/manhattan.bin').then(r => r.arrayBuffer())]);
+  const [meta, buf, osm] = await Promise.all([fetch('data/manhattan.json').then(r => r.json()), fetch('data/manhattan.bin').then(r => r.arrayBuffer()),
+    fetch('data/osm.json').then(r => r.json()).catch(() => null)]);   // OpenStreetMap: colours, names, shops (optional)
+  if (osm) { for (let k = 0; k < osm.tint.length; k += 2) CITY.tint.set(osm.tint[k], osm.tint[k + 1]); CITY.osm = osm; }
   const dv = new DataView(buf), T0 = meta.tile;
   for (const [ti, tj, off, count] of meta.tiles) {
     const ids = []; let o = off;
@@ -369,9 +388,10 @@ function buildOtherBoroughs() {   // the Bronx, Brooklyn and Queens across the r
 }
 // one block's mesh: walls with the window texture (three looks, by building), roofs flat
 function buildTile(tile) {
-  const groups = [[], [], [], []], uvs = [[], [], [], []], nrm = [[], [], [], []];
+  const groups = [[], [], [], [], []], uvs = [[], [], [], [], []], nrm = [[], [], [], [], []], cols = [[], [], [], [], []], tc = new THREE.Color();
   for (const id of tile.ids) {
-    const b = CITY.b[id], W = groups[b.v], U = uvs[b.v], N = nrm[b.v], h = b.top - b.base;
+    const b = CITY.b[id], tint = CITY.tint.get(id), wv = tint != null ? 4 : b.v, W = groups[wv], U = uvs[wv], N = nrm[wv], K = cols[wv], h = b.top - b.base;
+    if (tint != null) tc.setHex(tint, THREE.SRGBColorSpace); else tc.setRGB(1, 1, 1);
     let run = b.ou * TILE;
     for (let q = 0; q < b.n; q++) {
       const ax = b.x[q], az = b.z[q], bx = b.x[(q + 1) % b.n], bz = b.z[(q + 1) % b.n], len = Math.hypot(bx - ax, bz - az);
@@ -379,18 +399,19 @@ function buildTile(tile) {
       const nx = (bz - az) / len, nz = -(bx - ax) / len, u0 = run / TILE, u1 = (run + len) / TILE, v1 = h / TILE; run += len;
       W.push(ax, b.base, az, bx, b.top, bz, bx, b.base, bz, ax, b.base, az, ax, b.top, az, bx, b.top, bz);
       U.push(u0, 0, u1, v1, u1, 0, u0, 0, u0, v1, u1, v1);
-      for (let k = 0; k < 6; k++) N.push(nx, 0, nz);
+      for (let k = 0; k < 6; k++) { N.push(nx, 0, nz); K.push(tc.r, tc.g, tc.b); }
     }
     const pts = []; for (let q = 0; q < b.n; q++) pts.push(new THREE.Vector2(b.x[q], b.z[q]));
-    for (const t of THREE.ShapeUtils.triangulateShape(pts, [])) for (const q of t) { groups[3].push(b.x[q], b.top, b.z[q]); uvs[3].push(0, 0); nrm[3].push(0, 1, 0); }
+    for (const t of THREE.ShapeUtils.triangulateShape(pts, [])) for (const q of t) { groups[3].push(b.x[q], b.top, b.z[q]); uvs[3].push(0, 0); nrm[3].push(0, 1, 0); cols[3].push(1, 1, 1); }
   }
-  const g = new THREE.BufferGeometry(), P = [], UV = [], NN = [];
+  const g = new THREE.BufferGeometry(), P = [], UV = [], NN = [], CC = [];
   let start = 0;
-  groups.forEach((arr, k) => { P.push(...arr); UV.push(...uvs[k]); NN.push(...nrm[k]); g.addGroup(start, arr.length / 3, k); start += arr.length / 3; });
+  groups.forEach((arr, k) => { P.push(...arr); UV.push(...uvs[k]); NN.push(...nrm[k]); CC.push(...cols[k]); g.addGroup(start, arr.length / 3, k); start += arr.length / 3; });
   g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); g.setAttribute('normal', new THREE.Float32BufferAttribute(NN, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(CC, 3));
   const m = new THREE.Mesh(g, CITY_MATS); world.add(m); return m;
 }
-const CITY_MATS = [...wallMats, roofMat];
+const CITY_MATS = [...wallMats, roofMat, masonryMat];
 for (const m of CITY_MATS) m.side = THREE.DoubleSide;
 // ---------- street names (NYC Open Data Centerline, built by tools/build_streets.py) ----------
 // As in the city: a pole on each corner with two NYC DOT name blades, each blade running along its own
@@ -468,6 +489,86 @@ function updateStreets(x, z) {
     p.pole.scale.y = top;
     p.blades.forEach((bl, b) => { bl.arm.scale.set(h * bl.aspect, h, 1); bl.arm.position.y = top - h * (.55 + b * 1.1); });
   }
+}
+
+// ---------- OpenStreetMap: building names on the roofs, shop signs on the walls (tools/build_osm.py) ----------
+// The names of the tall buildings near you stand on their roofs, readable from the air; at street level
+// each nearby shop, restaurant, cafe or bar has a sign over its door. (c) OpenStreetMap contributors.
+const OSMV = { roofs: null, shops: null, grid: new Map(), cell: 100, at: new V3(1e9, 0, 1e9), tex: new Map() };
+const ROOF_N = 8, SHOP_N = 18, roofPool = [], shopPool = [];
+const AWNING = { restaurant: '#8c1d1d', fast_food: '#a8401a', cafe: '#5a3a22', bar: '#3c1f52', pub: '#2e4a22', bank: '#1d3a6a',
+  pharmacy: '#1e6b3a', cinema: '#111111', theatre: '#111111', ice_cream: '#b0487a', shop: '#1c1c22' };
+function osmTex(key, draw) {   // each sign drawn once; the least recently used are let go past 160
+  let t = OSMV.tex.get(key);
+  if (t) { OSMV.tex.delete(key); OSMV.tex.set(key, t); return t; }
+  const c = document.createElement('canvas'); draw(c, c.getContext('2d'));
+  t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.userData.aspect = c.width / c.height;
+  OSMV.tex.set(key, t);
+  if (OSMV.tex.size > 160) for (const [k0, t0] of OSMV.tex) {
+    if (![...roofPool, ...shopPool].some(m => m.material.map === t0)) { t0.dispose(); OSMV.tex.delete(k0); break; }
+  }
+  return t;
+}
+function roofTex(name) {
+  return osmTex('r' + name, (c, g) => {
+    const F = '64px "Bebas Neue", Impact, sans-serif'; g.font = F; const w = Math.ceil(g.measureText(name.toUpperCase()).width) + 40;
+    c.width = w; c.height = 88; g.font = F; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineJoin = 'round'; g.lineWidth = 10; g.strokeStyle = 'rgba(6,8,24,.8)'; g.strokeText(name.toUpperCase(), w / 2, 48);
+    g.fillStyle = '#ffe9b0'; g.fillText(name.toUpperCase(), w / 2, 48);
+  });
+}
+function shopTex(name, kind) {
+  return osmTex('s' + kind + name, (c, g) => {
+    const marquee = kind === 'cinema' || kind === 'theatre', F = `600 44px Overpass, "Arial Narrow", Arial, sans-serif`;
+    g.font = F; const w = Math.min(900, Math.ceil(g.measureText(name).width) + 48);
+    c.width = w; c.height = 72; g.fillStyle = AWNING[kind] || AWNING.shop; g.fillRect(0, 0, w, 72);
+    g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(0, 0, w, 6);
+    g.font = F; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = marquee ? '#ffd27a' : '#ffffff';
+    g.fillText(name, w / 2, 39, w - 30);
+  });
+}
+const SIGN_GEO = new THREE.PlaneGeometry(1, 1);
+for (let i = 0; i < ROOF_N; i++) { const m = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false })); m.center.set(.5, 0); m.visible = false; m.userData.k = -1; scene.add(m); roofPool.push(m); }
+for (let i = 0; i < SHOP_N; i++) { const m = new THREE.Mesh(SIGN_GEO, new THREE.MeshBasicMaterial({ transparent: true, polygonOffset: true, polygonOffsetFactor: -2 })); m.visible = false; m.userData.k = -1; scene.add(m); shopPool.push(m); }
+function osmReady() {   // the roof names at each named building's middle and top; the shops in a 100 m grid
+  const o = CITY.osm; if (!o || OSMV.roofs) return !!OSMV.roofs;
+  OSMV.roofs = [];
+  for (let k = 0; k < o.named.length; k += 2) {
+    const b = CITY.b[o.named[k]]; if (!b) continue;
+    OSMV.roofs.push({ x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, y: b.top, name: o.names[o.named[k + 1]] });
+  }
+  OSMV.shops = o.shop;
+  for (let k = 0; k < o.shop.length; k += 6) {
+    const key = Math.floor(o.shop[k] / 10 / OSMV.cell) * 100000 + Math.floor(o.shop[k + 1] / 10 / OSMV.cell);
+    let a = OSMV.grid.get(key); if (!a) OSMV.grid.set(key, a = []); a.push(k);
+  }
+  return true;
+}
+function repick(pool, keepKeys, place) {
+  const keep = new Set(keepKeys), have = new Set(pool.map(m => m.userData.k)), free = pool.filter(m => !keep.has(m.userData.k));
+  for (const k of keep) if (!have.has(k)) { const m = free.pop(); if (m) place(m, k); }
+  for (const m of free) { m.visible = false; m.userData.k = -1; }
+}
+function updateOSM(x, z) {
+  if (!osmReady()) return;
+  if (Math.hypot(x - OSMV.at.x, z - OSMV.at.z) > 15) {
+    OSMV.at.set(x, 0, z);
+    // the tall and the near first: distance over height^1.5, so the Empire State shows from 1.5 km, a 90 m tower from 100 m
+    const R = OSMV.roofs.map((r, i) => [Math.hypot(r.x - x, r.z - z), i, r]).filter(c => c[0] < 1500).map(c => [c[0] / Math.pow(c[2].y - groundAt(c[2].x, c[2].z), 1.5), c[1]]).sort((a, b) => a[0] - b[0]).slice(0, ROOF_N);
+    repick(roofPool, R.map(c => c[1]), (m, i) => { const r = OSMV.roofs[i], t = roofTex(r.name); m.material.map = t; m.material.needsUpdate = true; m.position.set(r.x, r.y + 3, r.z); m.userData.k = i; m.userData.aspect = t.userData.aspect; m.visible = true; });
+    const S = OSMV.shops, G = OSMV.cell, ci = Math.floor(x / G), cj = Math.floor(z / G), cand = [];
+    for (let i = ci - 2; i <= ci + 2; i++) for (let j = cj - 2; j <= cj + 2; j++)
+      for (const k of OSMV.grid.get(i * 100000 + j) || []) cand.push([(S[k] / 10 - x) ** 2 + (S[k + 1] / 10 - z) ** 2, k]);
+    cand.sort((a, b) => a[0] - b[0]);
+    repick(shopPool, cand.filter(c => c[0] < 160 * 160).slice(0, SHOP_N).map(c => c[1]), (m, k) => {
+      const o = CITY.osm, sx = S[k] / 10, sz = S[k + 1] / 10, t = shopTex(o.names[S[k + 5]], o.kinds[S[k + 4]]);
+      m.material.map = t; m.material.needsUpdate = true; m.userData.aspect = t.userData.aspect; m.userData.k = k; m.visible = true;
+      m.position.set(sx + S[k + 2] * .2, groundAt(sx, sz) + 4.6, sz + S[k + 3] * .2);
+      m.rotation.set(0, Math.atan2(S[k + 2], S[k + 3]), 0);   // facing out of the wall
+    });
+  }
+  for (const m of roofPool) if (m.visible) { const d = m.position.distanceTo(camera.position), h = Math.min(40, Math.max(4, d * .03)); m.scale.set(h * m.userData.aspect, h, 1); }
+  for (const m of shopPool) if (m.visible) { const d = m.position.distanceTo(camera.position), h = Math.min(3, Math.max(1.1, d * .02)), w = Math.min(7, h * m.userData.aspect); m.scale.set(w, w / m.userData.aspect, 1); }   // no wider than a shopfront
 }
 
 function updateWorld(x, z) {   // build the blocks near the camera (a few a frame), drop the far ones
@@ -1283,6 +1384,7 @@ function tick(dt) {
   if (S.phase === 'end') S.endT += dt;
   updateWorld(camPos.x, camPos.z);
   updateStreets(camPos.x, camPos.z);
+  updateOSM(camPos.x, camPos.z);
   if (S.race != null && S.phase === 'play') {   // the arrow points at the next landmark
     const c = LM(CITY.meta.races[S.race][S.cp]), r = rightOf(camDir, tA);
     const dx = c.x - H.p.x, dz = c.z - H.p.z;
