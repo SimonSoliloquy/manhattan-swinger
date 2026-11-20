@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19f';
+const VERSION = 'v2026-11-19g';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -454,10 +454,45 @@ function rightOf(f, out) { return out.set(-f.z, 0, f.x).normalize(); }
 function handPos(i, out) { rightOf(camDir, out); return out.multiplyScalar(i === 0 ? -0.32 : 0.32).add(H.p).setY(H.p.y + 0.9); }
 function runSpeed() { return T.roofRun; }
 
+// ---------- where a run starts: only among tall buildings (Simon, 2026-11-19) ----------
+// A 100 m square counts when at least 8 buildings of 60 m or more stand within 150 m of its centre
+// (as dense as Midtown: Midtown and the Financial District, mostly). A start anywhere else moves to
+// the nearest square that counts.
+const SPAWN = { tallH: 60, r: 150, need: 8, cell: 100, pts: null };
+function spawnPoints() {   // [x, z, x, z, ...] centres of the squares that count, worked out once
+  if (SPAWN.pts) return SPAWN.pts;
+  const C = SPAWN.cell, R2 = SPAWN.r * SPAWN.r, span = Math.ceil(SPAWN.r / C), key = (i, j) => i * 100000 + j;
+  const tall = [], bucket = new Map();
+  for (const b of CITY.b) if (b.top - b.base >= SPAWN.tallH) {
+    const x = (b.x0 + b.x1) / 2, z = (b.z0 + b.z1) / 2, k = key(Math.floor(x / C), Math.floor(z / C));
+    tall.push(x, z); let a = bucket.get(k); if (!a) bucket.set(k, a = []); a.push(x, z);
+  }
+  const pts = [], seen = new Set();
+  for (let t = 0; t < tall.length; t += 2) {   // only squares near a tall building can count
+    const ci = Math.floor(tall[t] / C), cj = Math.floor(tall[t + 1] / C);
+    for (let i = ci - span; i <= ci + span; i++) for (let j = cj - span; j <= cj + span; j++) {
+      const k = key(i, j); if (seen.has(k)) continue; seen.add(k);
+      const x = (i + .5) * C, z = (j + .5) * C; if (kindAt(x, z) !== 1) continue;   // over a street, not water or a park
+      let n = 0;
+      for (let a = i - span; a <= i + span; a++) for (let c = j - span; c <= j + span; c++) {
+        const B = bucket.get(key(a, c)); if (B) for (let q = 0; q < B.length; q += 2) if ((B[q] - x) ** 2 + (B[q + 1] - z) ** 2 <= R2) n++;
+      }
+      if (n >= SPAWN.need) pts.push(x, z);
+    }
+  }
+  return SPAWN.pts = pts;
+}
+function tallSpot(x, z) {   // the point itself if it is among tall buildings, else the nearest square that is
+  const P = spawnPoints(); let best = -1, bd = Infinity;
+  for (let k = 0; k < P.length; k += 2) { const d = (P[k] - x) ** 2 + (P[k + 1] - z) ** 2; if (d < bd) { bd = d; best = k; } }
+  return best < 0 || bd <= (SPAWN.cell * .75) ** 2 ? { x, z } : { x: P[best], z: P[best + 1] };
+}
+
 function startHero(x = 0, z = 0, face = null) {   // in the air over the street, below the tall buildings around, moving off
   H.v.set(0, 0, 0); H.state = 'air'; H.wallCool = 0; H.rollT = 0;
   S.fallT = 0; S.splashT = 0; hero.visible = true;
   for (const h of hooks) { h.state = 'off'; h.reel = 0; }
+  ({ x, z } = tallSpot(x, z));   // only among tall buildings
   // not inside a building: step out to the nearest street
   for (const b of near(x, z, 0)) if (inside(b, x, z)) { const e = nearestEdge(b, x, z); x = e.x + e.nx * 3; z = e.z + e.nz * 3; }
   const g = groundAt(x, z), tops = near(x, z, 140).map(b => b.top).sort((a, b) => b - a);
@@ -1047,6 +1082,8 @@ function drawMap() {
   for (const f of L) { g.beginPath(); for (let k = 0; k < f.length; k += 2) (k ? g.lineTo : g.moveTo).call(g, X(f[k]), Z(f[k + 1])); g.closePath(); g.fill(); }
   const G = CITY.meta.grid; g.fillStyle = '#2c5236';   // the parks
   for (let j = 0; j < G.nz; j++) for (let i = 0; i < G.nx; i++) if (CITY.gk[j * G.nx + i] === 2) g.fillRect(X(G.x0 + i * G.cell), Z(G.z0 + j * G.cell), G.cell * MAP.k + .6, G.cell * MAP.k + .6);
+  const P = spawnPoints(), C = SPAWN.cell; g.fillStyle = 'rgba(255,210,122,.28)';   // where a run can start
+  for (let k = 0; k < P.length; k += 2) g.fillRect(X(P[k] - C / 2), Z(P[k + 1] - C / 2), C * MAP.k + .6, C * MAP.k + .6);
   g.font = `${11 * dpr}px -apple-system, Helvetica, Arial`; g.textBaseline = 'middle';
   for (const l of Object.values(CITY.meta.landmarks)) {
     g.fillStyle = '#ffd27a'; g.beginPath(); g.arc(X(l.x), Z(l.z), 3.5 * dpr, 0, Math.PI * 2); g.fill();
