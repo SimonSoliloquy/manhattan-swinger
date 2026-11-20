@@ -100,7 +100,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
     <p class="line" id="pb"></p>
     <div id="namebox" hidden><input id="nick" maxlength="20" placeholder="Your name" autocomplete="off"><button class="btn small" id="save">Save</button></div>
     <p class="line" id="rank"></p>
-    <div class="boards" id="endboards" hidden><div class="board"><h3>Today</h3><ol id="ebDay"></ol></div><div class="board"><h3>All time</h3><ol id="ebAll"></ol></div></div>
+    <div class="boards" id="endboards" hidden><div class="board"><h3>Fastest</h3><ol id="ebAll"></ol></div></div>
     <div style="margin-top:10px"><button class="btn" id="again">Again</button><button class="btn alt" id="tomenu">Menu</button></div>
     <p class="by">Built by <a href="https://simonsoliloquy.com" target="_blank" rel="noopener">simonsoliloquy.com</a></p>
   </div></div>
@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19c';
+const VERSION = 'v2026-11-19d';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -1005,7 +1005,7 @@ function finishRace() {
   $('rank').textContent = ''; $('endboards').hidden = true; $('namebox').hidden = S.bot;
   $('nick').value = (store.get('ms-name') || '').slice(0, 20);
   endRunData = S.bot ? null : { race: S.race, sent: false, run: { player: playerId(), score: Math.max(0, 1000000 - Math.round(t * 100)), centis: Math.round(t * 100), version: VERSION } };
-  showBoards(S.race, $('ebDay'), $('ebAll'), $('endboards'));
+  showBoards(S.race, $('ebAll'), $('endboards'));
   setTimeout(() => { if (S.phase === 'end') $('end').hidden = false; }, 400);
 }
 function toMenu() {
@@ -1083,15 +1083,20 @@ const LB = {
     try { const r = await fetch(this.url + path, { ...init, signal: ac.signal }); if (!r.ok) { console.warn('Leaderboard', path, r.status); return null; } return await r.json(); }
     catch (e) { console.warn('Leaderboard', path, e?.message); return null; } finally { clearTimeout(timer); }
   },
+  // Free-tier budget (2026-11-19): one GET per race board per page load, one POST per saved run.
+  // The POST is sent as text/plain so the browser sends no CORS preflight, and it answers the new list.
+  lists: {},
+  rows: (d, n = 5) => Array.isArray(d) ? d.slice(0, n).map(x => ({ name: String(x?.name || 'Anonymous').slice(0, 20), time: (1000000 - (+x?.score || 0)) / 100 })) : null,
   async submit(race, run) {
     if (local()) return null;   // a local test copy never writes to the real board
-    const x = await this.req(race + '/submit', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(run) });
-    return x && typeof x === 'object' ? { rankAllTime: +x.rankAllTime || null, rankDaily: +x.rankDaily || null } : null;
+    const x = await this.req(race + '/submit?n=5', { method: 'POST', keepalive: true, body: JSON.stringify(run) });
+    if (!x || typeof x !== 'object') return null;
+    this.lists[race] = this.rows(x.top) || this.lists[race];
+    return { rankAllTime: +x.rankAllTime || null };
   },
-  async top(race, scope, n = 5) {
+  async top(race) {
     if (local()) return null;
-    const d = await this.req(`${race}/top?scope=${scope}&n=${n}`);
-    return Array.isArray(d) ? d.slice(0, n).map(x => ({ name: String(x?.name || 'Anonymous').slice(0, 20), time: (1000000 - (+x?.score || 0)) / 100 })) : null;
+    return this.lists[race] ??= this.rows(await this.req(`${race}/top?n=5`));
   },
 };
 function fillList(ol, rows) {
@@ -1100,10 +1105,10 @@ function fillList(ol, rows) {
   if (!rows.length) { ol.innerHTML = '<li>No runs yet</li>'; return; }
   for (const r of rows) { const li = document.createElement('li'); li.textContent = `${r.name} ${fmt(r.time)}`; ol.appendChild(li); }
 }
-async function showBoards(race, day, all, wrap) {
-  const [d, a] = await Promise.all([LB.top(race, 'daily'), LB.top(race, 'alltime')]);
-  if (wrap) { if (!d && !a) return; wrap.hidden = false; }
-  fillList(day, d); fillList(all, a);
+async function showBoards(race, all, wrap) {
+  const a = await LB.top(race);
+  if (wrap) { if (!a) return; wrap.hidden = false; }
+  fillList(all, a);
 }
 function loadMenu() { if (CITY.ready) fillRaces(); }
 $('save').onclick = async () => {
@@ -1112,8 +1117,8 @@ $('save').onclick = async () => {
   $('save').disabled = true; $('rank').textContent = 'Saving';
   const res = await LB.submit(st.race, { ...st.run, name: name || null });
   $('save').disabled = false; $('namebox').hidden = true;
-  $('rank').textContent = res ? `#${res.rankDaily ?? '?'} today, #${res.rankAllTime ?? '?'} all time` : 'The scoreboard is offline. Your best is saved on this phone.';
-  showBoards(st.race, $('ebDay'), $('ebAll'), $('endboards'));
+  $('rank').textContent = res ? `#${res.rankAllTime ?? '?'} of all time` : 'The scoreboard is offline. Your best is saved on this phone.';
+  showBoards(st.race, $('ebAll'), $('endboards'));
 };
 $('nick').addEventListener('keydown', e => { if (e.key === 'Enter') $('save').click(); });
 async function checkVersion() {

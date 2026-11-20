@@ -1,0 +1,15 @@
+{
+  // Manhattan Swinger at https://simonsoliloquy.com/manhattan-swinger/: plain files on Cloudflare
+  // (free and unlimited: no Worker code runs, so the 1.3 MB of map data costs nothing however many
+  // play). tools/cf-build.sh puts them in .cf/manhattan-swinger/, because the URL path is the folder
+  // path. The routes claim that one path on the simonsoliloquy.com site.
+  "name": "manhattan-swinger",
+  "compatibility_date": "2026-11-01",
+  "account_id": "27acccc64187a6a9c27103eadb2eb10f",
+  "workers_dev": false,
+  "assets": { "directory": "./.cf" },
+  "routes": [
+    { "pattern": "simonsoliloquy.com/manhattan-swinger", "zone_name": "simonsoliloquy.com" },
+    { "pattern": "simonsoliloquy.com/manhattan-swinger/*", "zone_name": "simonsoliloquy.com" }
+  ]
+}

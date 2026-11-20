@@ -2,3 +2,5 @@ data-raw/
 .vercel
 .env*
 .DS_Store
+.cf/
+.wrangler/

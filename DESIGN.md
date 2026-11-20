@@ -18,4 +18,4 @@ A version of City Swinger in real Manhattan (Simon, 2026-11-19: "I want to do a 
 Empire State to Chrysler · Times Square to Bethesda Fountain · One World Trade to Washington Square · Flatiron to Empire State · the Battery to One World Trade · Washington Square to Union Square to Flatiron · Hudson Yards to Times Square to Rockefeller Center to Grand Central · Brooklyn Bridge to One World Trade to Empire State. A checkpoint counts within 35 m of the landmark, at any height. A splash keeps the clock running.
 
 ## Hosting
-Repo `SimonSoliloquy/manhattan-swinger`, Vercel, live at https://manhattan-swinger.vercel.app; a push to `main` deploys. Boards `manhattan-swinger-r0` … `r7` on the shared Worker (score = 1,000,000 minus hundredths of a second).
+Repo `SimonSoliloquy/manhattan-swinger`, live at https://simonsoliloquy.com/manhattan-swinger/ (Cloudflare, plain files, since 2026-11-19; one all-time board per race, no Today board). Boards `manhattan-swinger-r0` … `r7` on the shared Worker (score = 1,000,000 minus hundredths of a second).

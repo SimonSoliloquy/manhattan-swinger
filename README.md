@@ -5,9 +5,9 @@ Data, with the sun setting over the Hudson. Free roam from wherever you tap on t
 between landmarks. One thumb: hold to swing (the rope goes to the side you tilt the phone), let go to
 fly, tap to jump. Land on any roof or street and keep running; only the rivers set you back.
 
-Live at https://manhattan-swinger.vercel.app. One `index.html` (three.js 0.170.0 from a CDN, no build)
+Live at https://simonsoliloquy.com/manhattan-swinger/ (since 2026-11-19; the old manhattan-swinger.vercel.app address forwards there until about 2026-12-19; `tools/cf-build.sh` then `npx wrangler@4.40.0 deploy` publishes, see `wrangler.jsonc`). One `index.html` (three.js 0.170.0 from a CDN, no build)
 plus `data/manhattan.bin` and `data/manhattan.json`. `DESIGN.md` holds every ruling. Bump `VERSION` on
-every change. Made from City Swinger (`SimonSoliloquy/city-swinger`) by `tools/make_from_city_swinger.py`.
+every change. Made from City Swinger (`SimonSoliloquy/city-swinger`) by `tools/make_from_city_swinger.py` (once; `index.html` has been edited directly since).
 
 Rebuild the city: download the two NYC Open Data files into `data-raw/` (commands in
 `tools/build_manhattan.py`), then `~/ComfyUI/.venv/bin/python -I tools/build_manhattan.py`.
