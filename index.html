@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19g';
+const VERSION = 'v2026-11-19h';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -382,6 +382,61 @@ function buildTile(tile) {
 }
 const CITY_MATS = [...wallMats, roofMat];
 for (const m of CITY_MATS) m.side = THREE.DoubleSide;
+// ---------- street names (NYC Open Data Centerline, built by tools/build_streets.py) ----------
+// A green New York street sign over the middle of each block, standing 12 m above the road and facing
+// the camera, kept big enough to read from swinging height. Only the LABELS blocks nearest the camera
+// get one of a fixed set of signs, so the cost is the same anywhere on the island.
+const STREETS = { names: null, seg: null, grid: new Map(), cell: 200, tex: new Map(), at: new V3(1e9, 0, 1e9) };
+const LABELS = 24, labelPool = [];
+fetch('data/streets.json').then(r => r.json()).then(d => {
+  for (let k = 0; k < d.seg.length; k += 5) {
+    const key = Math.floor(d.seg[k + 1] / STREETS.cell) * 100000 + Math.floor(d.seg[k + 2] / STREETS.cell);
+    let a = STREETS.grid.get(key); if (!a) STREETS.grid.set(key, a = []); a.push(k);
+  }
+  STREETS.names = d.names; STREETS.seg = d.seg;
+}).catch(e => console.warn('street names', e?.message));
+function streetTex(i) {   // the sign drawn once onto a canvas; the least recently used are let go past 120
+  let t = STREETS.tex.get(i);
+  if (t) { STREETS.tex.delete(i); STREETS.tex.set(i, t); return t; }
+  const name = STREETS.names[i], c = document.createElement('canvas'), g = c.getContext('2d'), F = '600 46px -apple-system, "Helvetica Neue", Arial, sans-serif';
+  g.font = F; const w = Math.ceil(g.measureText(name).width) + 40, h = 72;
+  c.width = w; c.height = h; g.font = F; g.textBaseline = 'middle'; g.textAlign = 'center';
+  g.fillStyle = '#0d6b3f'; g.beginPath(); g.roundRect(2, 2, w - 4, h - 4, 10); g.fill();
+  g.lineWidth = 3; g.strokeStyle = '#e9efe9'; g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 7); g.stroke();
+  g.fillStyle = '#ffffff'; g.fillText(name, w / 2, h / 2 + 2);
+  t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.userData.aspect = w / h;
+  STREETS.tex.set(i, t);
+  if (STREETS.tex.size > 120) for (const [k0, t0] of STREETS.tex) { if (!labelPool.some(m => m.material.map === t0)) { t0.dispose(); STREETS.tex.delete(k0); break; } }
+  return t;
+}
+for (let i = 0; i < LABELS; i++) {
+  const m = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
+  m.center.set(.5, 0); m.visible = false; m.userData.seg = -1; scene.add(m); labelPool.push(m);
+}
+function placeLabel(m, k) {
+  const s = STREETS.seg, x = s[k + 1], z = s[k + 2], t = streetTex(s[k]);
+  m.material.map = t; m.material.needsUpdate = true;
+  m.position.set(x, groundAt(x, z) + 12, z); m.userData.seg = k; m.userData.aspect = t.userData.aspect; m.visible = true;
+}
+function updateStreets(x, z) {
+  if (!STREETS.seg) return;
+  if (Math.hypot(x - STREETS.at.x, z - STREETS.at.z) > 15) {   // re-pick the nearest blocks every 15 m
+    STREETS.at.set(x, 0, z);
+    const C = STREETS.cell, ci = Math.floor(x / C), cj = Math.floor(z / C), cand = [];
+    for (let i = ci - 2; i <= ci + 2; i++) for (let j = cj - 2; j <= cj + 2; j++)
+      for (const k of STREETS.grid.get(i * 100000 + j) || []) cand.push([(STREETS.seg[k + 1] - x) ** 2 + (STREETS.seg[k + 2] - z) ** 2, k]);
+    cand.sort((a, b) => a[0] - b[0]);
+    const keep = new Set(cand.slice(0, LABELS).map(c => c[1]));
+    const have = new Set(labelPool.map(m => m.userData.seg)), free = labelPool.filter(m => !keep.has(m.userData.seg));
+    for (const k of keep) if (!have.has(k)) { const m = free.pop(); if (m) placeLabel(m, k); }
+    for (const m of free) { m.visible = false; m.userData.seg = -1; }
+  }
+  for (const m of labelPool) if (m.visible) {   // about 2 degrees tall on screen, never under 2.5 m; fades out far away
+    const d = m.position.distanceTo(camera.position), hgt = Math.max(2.5, d * .035);
+    m.scale.set(hgt * m.userData.aspect, hgt, 1); m.material.opacity = Math.max(0, Math.min(1, (320 - d) / 80));
+  }
+}
+
 function updateWorld(x, z) {   // build the blocks near the camera (a few a frame), drop the far ones
   if (!CITY.ready) return;
   const T0 = CITY.meta.tile, ci = Math.floor(x / T0), cj = Math.floor(z / T0), r = Math.ceil(VIEW / T0);
@@ -1194,6 +1249,7 @@ function tick(dt) {
   if (S.phase === 'splash') { splashStep(dt); if (S.race != null) S.t += dt; }
   if (S.phase === 'end') S.endT += dt;
   updateWorld(camPos.x, camPos.z);
+  updateStreets(camPos.x, camPos.z);
   if (S.race != null && S.phase === 'play') {   // the arrow points at the next landmark
     const c = LM(CITY.meta.races[S.race][S.cp]), r = rightOf(camDir, tA);
     const dx = c.x - H.p.x, dz = c.z - H.p.z;

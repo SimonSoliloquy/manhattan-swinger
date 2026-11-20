@@ -6,4 +6,4 @@ set -e
 cd "$(dirname "$0")/.."
 rm -rf .cf && mkdir -p .cf/manhattan-swinger/data
 cp index.html .cf/manhattan-swinger/
-cp data/manhattan.bin data/manhattan.json .cf/manhattan-swinger/data/
+cp data/manhattan.bin data/manhattan.json data/streets.json .cf/manhattan-swinger/data/
