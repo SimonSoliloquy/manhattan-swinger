@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19d';
+const VERSION = 'v2026-11-19e';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -443,7 +443,7 @@ function tallestNear(x, z, r) { let best = null; for (const b of near(x, z, r)) 
 // ============================================================================================
 const S = { phase: 'menu', mode: 'roam', race: null, cp: 0, dist: 0, startZ: 0, t: 0, hooks: 0, crashed: false, bot: false, tiltOK: false, tiltRaw: 0, tiltZero: null,
   keySteer: 0, keyReel: 0, wheelT: 0, wheelDir: 0, hint: 0, hintT: 0, reeled: false, runPhase: 0, stepT: 0, tickT: 0, endT: 0, lastVy: 0,
-  thumbReel: 0, thumbSlide: 0, lastSafe: null, splashT: 0 };
+  thumbReel: 0, thumbSlide: 0, lastSafe: new V3(), splashT: 0 };
 const H = { p: new V3(), v: new V3(), state: 'air', wallN: new V3(), wallB: null, wallT: 0, wallCool: 0, roof: null, heading: new V3(0, 0, 1), steer: 0,
   rollT: 0 };
 const hooks = [0, 1].map(i => ({ i, state: 'off', a: new V3(), L: 0, t: 0, reel: 0, reelV: 0, dist: 0 }));
