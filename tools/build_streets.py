@@ -7,7 +7,8 @@ Source (downloaded into data-raw/, not committed): Centerline `inkn-q76z`, Manha
 
 Run:  python3 -I tools/build_streets.py
 Writes data/streets.json: {"names": [...], "seg": [name index, x, z, angle in tenths of a degree, length, ...]}
-in the game's metres (x east, z south, origin at Times Square, as tools/build_manhattan.py).
+in the game's metres. Names follow NYC DOT signs ('W 42 St', '5 Av'),
+ (x east, z south, origin at Times Square, as tools/build_manhattan.py).
 Kept: streets and highways (rw_type 1, 2) at ground level (level code 13), blocks of 40 m or more.
 """
 import json, math, os, re
@@ -18,16 +19,13 @@ LAT0, LON0 = 40.7580, -73.9855
 KX, KZ = 111320 * math.cos(math.radians(LAT0)), 110574
 def xz(lon, lat): return ((lon - LON0) * KX, -(lat - LAT0) * KZ)
 
-WORD = {'ST': 'St', 'AVE': 'Ave', 'DR': 'Dr', 'PL': 'Pl', 'BLVD': 'Blvd', 'RD': 'Rd', 'SQ': 'Sq', 'TER': 'Ter',
+WORD = {'ST': 'St', 'AVE': 'Av', 'DR': 'Dr', 'PL': 'Pl', 'BLVD': 'Blvd', 'RD': 'Rd', 'SQ': 'Sq', 'TER': 'Ter',
         'LN': 'Ln', 'PKWY': 'Pkwy', 'HWY': 'Hwy', 'JR': 'Jr', 'SLIP': 'Slip', 'ALY': 'Aly', 'CT': 'Ct', 'EXPWY': 'Expy',
         'FDR': 'FDR', 'OF': 'of', 'THE': 'the', 'AND': 'and', 'LOOP': 'Loop', 'PLZ': 'Plaza', 'CIR': 'Circle', 'APPR': 'Approach'}
-def ordinal(n):
-    n = int(n); s = 'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
-    return f'{n}{s}'
-def pretty(label):
+def pretty(label):   # as NYC DOT writes it on a sign: 'W 42 St', '5 Av', 'Broadway'
     out = []
     for i, w in enumerate(label.split()):
-        if re.fullmatch(r'\d+', w): out.append(ordinal(w))
+        if re.fullmatch(r'\d+', w): out.append(w)
         elif w in WORD: out.append(WORD[w] if i else WORD[w][0].upper() + WORD[w][1:])
         elif len(w) == 1: out.append(w)
         else: out.append(w.capitalize())

@@ -9,7 +9,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23070b1c'/%3E%3Cpath d='M5 27L21 11' stroke='%23e6eeff' stroke-width='2.5'/%3E%3Cpath d='M21 11l5-5M21 11l6 1M21 11l-1-6' stroke='%23ffd27a' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Overpass:wght@600&display=swap" rel="stylesheet">
 <style>
 :root { --ink: #070b1c; --paper: #f2efe6; --gold: #ffd27a; }
 * { box-sizing: border-box; }
@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19h';
+const VERSION = 'v2026-11-19i';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -336,13 +336,23 @@ function groundAt(x, z) {
 function buildGround() {
   const G = CITY.meta.grid, pos = [], col = [], street = new THREE.Color(0x2a2c3a), park = new THREE.Color(0x2c5236), c = new THREE.Color();
   const corner = (i, j) => groundAt(G.x0 + i * G.cell, G.z0 + j * G.cell);
+  // Hills read at night by shading baked into the colours: lit from the sunset (west, low), darker
+  // facing away, and bare rock on steep park slopes (USGS 3DEP terrain, tools/fetch_dem.py).
+  const rock = new THREE.Color(0x5a5560), sun = new V3(-1, .55, .15).normalize(), e1 = new V3(), e2 = new V3(), nrm = new V3();
   for (let j = 0; j < G.nz; j++) for (let i = 0; i < G.nx; i++) {
     const k = CITY.gk[j * G.nx + i]; if (!k) continue;
-    c.copy(k === 2 ? park : street).offsetHSL(0, 0, ((i * 7 + j * 13) % 5) * .006);
     const xa = G.x0 + i * G.cell, xb = xa + G.cell, za = G.z0 + j * G.cell, zb = za + G.cell;
     const ya = corner(i, j), yb = corner(i + 1, j), yc = corner(i, j + 1), yd = corner(i + 1, j + 1);
-    pos.push(xa, ya, za, xa, yc, zb, xb, yb, za, xb, yb, za, xa, yc, zb, xb, yd, zb);
-    for (let q = 0; q < 6; q++) col.push(c.r, c.g, c.b);
+    const tri = [[xa, ya, za, xa, yc, zb, xb, yb, za], [xb, yb, za, xa, yc, zb, xb, yd, zb]];
+    for (const t of tri) {
+      e1.set(t[3] - t[0], t[4] - t[1], t[5] - t[2]); e2.set(t[6] - t[0], t[7] - t[1], t[8] - t[2]); nrm.crossVectors(e1, e2).normalize();
+      if (nrm.y < 0) nrm.negate();
+      c.copy(k === 2 ? park : street);
+      if (k === 2 && nrm.y < .9) c.lerp(rock, Math.min(1, (.9 - nrm.y) * 6));   // steeper than about 25 degrees: rock
+      const shade = .55 + 1.1 * Math.max(0, nrm.dot(sun)) - .35 * (1 - nrm.y);
+      c.multiplyScalar(shade).offsetHSL(0, 0, ((i * 7 + j * 13) % 5) * .006 + Math.min(.05, Math.max(0, (ya - 10) / 1400)));
+      pos.push(...t); for (let q = 0; q < 3; q++) col.push(c.r, c.g, c.b);
+    }
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals();
   scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true })));
@@ -383,28 +393,37 @@ function buildTile(tile) {
 const CITY_MATS = [...wallMats, roofMat];
 for (const m of CITY_MATS) m.side = THREE.DoubleSide;
 // ---------- street names (NYC Open Data Centerline, built by tools/build_streets.py) ----------
-// A green New York street sign over the middle of each block, standing 12 m above the road and facing
+// A NYC DOT street name sign over the middle of each block, standing 12 m above the road and facing
 // the camera, kept big enough to read from swinging height. Only the LABELS blocks nearest the camera
 // get one of a fixed set of signs, so the cost is the same anywhere on the island.
 const STREETS = { names: null, seg: null, grid: new Map(), cell: 200, tex: new Map(), at: new V3(1e9, 0, 1e9) };
 const LABELS = 24, labelPool = [];
-fetch('data/streets.json').then(r => r.json()).then(d => {
+fetch('data/streets.json').then(r => r.json()).then(async d => {
+  try { await document.fonts.load('600 46px Overpass'); } catch {}
   for (let k = 0; k < d.seg.length; k += 5) {
     const key = Math.floor(d.seg[k + 1] / STREETS.cell) * 100000 + Math.floor(d.seg[k + 2] / STREETS.cell);
     let a = STREETS.grid.get(key); if (!a) STREETS.grid.set(key, a = []); a.push(k);
   }
   STREETS.names = d.names; STREETS.seg = d.seg;
 }).catch(e => console.warn('street names', e?.message));
+// The sign is NYC DOT's street name blade: green, a white border inset with rounded corners, white
+// mixed-case letters in a Highway Gothic face (Overpass), the direction and the suffix ('W', 'St',
+// 'Av') smaller, as on the city's signs.
+const SMALL = new Set(['N', 'S', 'E', 'W', 'St', 'Av', 'Pl', 'Dr', 'Blvd', 'Rd', 'Ter', 'Ln', 'Sq', 'Slip', 'Plaza', 'Pkwy', 'Hwy', 'Ct', 'Aly', 'Walk', 'Loop', 'Circle']);
 function streetTex(i) {   // the sign drawn once onto a canvas; the least recently used are let go past 120
   let t = STREETS.tex.get(i);
   if (t) { STREETS.tex.delete(i); STREETS.tex.set(i, t); return t; }
-  const name = STREETS.names[i], c = document.createElement('canvas'), g = c.getContext('2d'), F = '600 46px -apple-system, "Helvetica Neue", Arial, sans-serif';
-  g.font = F; const w = Math.ceil(g.measureText(name).width) + 40, h = 72;
-  c.width = w; c.height = h; g.font = F; g.textBaseline = 'middle'; g.textAlign = 'center';
-  g.fillStyle = '#0d6b3f'; g.beginPath(); g.roundRect(2, 2, w - 4, h - 4, 10); g.fill();
-  g.lineWidth = 3; g.strokeStyle = '#e9efe9'; g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 7); g.stroke();
-  g.fillStyle = '#ffffff'; g.fillText(name, w / 2, h / 2 + 2);
-  t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.userData.aspect = w / h;
+  const words = STREETS.names[i].split(' '), c = document.createElement('canvas'), g = c.getContext('2d');
+  const font = (px) => `600 ${px}px Overpass, "Highway Gothic", "Arial Narrow", Arial, sans-serif`;
+  const parts = words.map((w, k) => ({ w, px: SMALL.has(w) && (k === 0 || k === words.length - 1) && words.length > 1 ? 36 : 50 }));
+  let tw = 0; for (const q of parts) { g.font = font(q.px); q.width = g.measureText(q.w).width; tw += q.width; }
+  const gap = 14, h = 76, w = Math.ceil(tw + gap * (parts.length - 1)) + 44;
+  c.width = w; c.height = h;
+  g.fillStyle = '#006b3f'; g.beginPath(); g.roundRect(0, 0, w, h, 9); g.fill();
+  g.lineWidth = 3.5; g.strokeStyle = '#ffffff'; g.beginPath(); g.roundRect(5, 5, w - 10, h - 10, 6); g.stroke();
+  g.fillStyle = '#ffffff'; g.textBaseline = 'alphabetic'; let x = 22;
+  for (const q of parts) { g.font = font(q.px); g.fillText(q.w, x, 55); x += q.width + gap; }
+  t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.userData.aspect = w / h;
   STREETS.tex.set(i, t);
   if (STREETS.tex.size > 120) for (const [k0, t0] of STREETS.tex) { if (!labelPool.some(m => m.material.map === t0)) { t0.dispose(); STREETS.tex.delete(k0); break; } }
   return t;

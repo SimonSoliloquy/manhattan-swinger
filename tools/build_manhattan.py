@@ -4,6 +4,7 @@ Sources (NYC Open Data, downloaded into data-raw/, which is not committed):
   footprints.geojson  Building Footprints `5zhs-2jue`, Manhattan only (base_bbl starts with 1):
                       outline, height_roof (ft above ground), ground_elevation (ft)
   boroughs.geojson    Borough Boundaries `gthc-hcne` (clipped to the shoreline)
+  terrarium/          bare-earth elevation tiles from tools/fetch_dem.py (optional; the ground uses them when present)
 
 Download again with:
   curl -G -o data-raw/footprints.geojson https://data.cityofnewyork.us/resource/5zhs-2jue.geojson \
@@ -138,6 +139,37 @@ for _ in range(80):   # fill land with no buildings (parks, streets) from the ne
     with np.errstate(invalid='ignore'): m = np.nanmean(nb, axis=0)
     ground[nan] = m[nan]
 ground = np.where(inside, np.nan_to_num(ground, nan=2.0), 0.0)
+# Real bare-earth terrain when tools/fetch_dem.py has downloaded it (USGS 3DEP lidar, through the
+# Terrain Tiles on AWS Open Data): each cell is the mean of 9 samples across it. Without it, the
+# ground stays the mean of the buildings' recorded ground heights, filled in across the parks.
+DEM = os.path.join(RAW, 'terrarium')
+if os.path.isdir(DEM) and os.listdir(DEM):
+    from PIL import Image
+    tiles = {}
+    for f in os.listdir(DEM):
+        if not f.endswith('.png'): continue
+        zl, tx, ty = map(int, f[:-4].split('_'))
+        a = np.asarray(Image.open(os.path.join(DEM, f)).convert('RGB')).astype(np.float64)
+        tiles[(tx, ty)] = a[..., 0] * 256 + a[..., 1] + a[..., 2] / 256 - 32768
+    ZL = zl; NPX = 2 ** ZL * 256
+    def dem(x, z):   # metres above sea level at game coordinates (arrays)
+        lon = x / KX + LON0; lat = LAT0 - z / KZ
+        px = (lon + 180) / 360 * NPX; py = (1 - np.arcsinh(np.tan(np.radians(lat))) / np.pi) / 2 * NPX
+        out = np.full(np.shape(x), np.nan)
+        tx, ty = (px // 256).astype(int), (py // 256).astype(int)
+        for (a, b), t in tiles.items():
+            m = (tx == a) & (ty == b)
+            if m.any(): out[m] = t[(py[m] % 256).astype(int), (px[m] % 256).astype(int)]
+        return out
+    acc = np.zeros(PX.shape); n = np.zeros(PX.shape)
+    for dx in (-CELL / 3, 0, CELL / 3):
+        for dz in (-CELL / 3, 0, CELL / 3):
+            v = dem(PX + dx, PZ + dz); ok = ~np.isnan(v); acc[ok] += v[ok]; n[ok] += 1
+    terrain = np.where(n > 0, acc / np.maximum(n, 1), np.nan)
+    use = inside & ~np.isnan(terrain)
+    diff = terrain[use & (hcnt > 0)] - ground[use & (hcnt > 0)]
+    print('terrain: cells', int(use.sum()), 'vs the buildings\' ground: mean', round(float(diff.mean()), 1), 'm, 90% within', round(float(np.percentile(np.abs(diff), 90)), 1), 'm')
+    ground = np.where(use, np.clip(terrain, 0.5, None), ground)
 # a park: land with no building in this cell or any neighbour (Central Park, Riverside, the Battery...)
 busy = (hcnt > 0).astype(np.uint8); pad = np.pad(busy, 1)
 near = sum(pad[1 + dj:1 + dj + nz, 1 + di:1 + di + nx] for dj in (-1, 0, 1) for di in (-1, 0, 1))
@@ -164,7 +196,7 @@ races = [['empire', 'chrysler'], ['times', 'bethesda'], ['wtc', 'washsq'], ['fla
 os.makedirs(OUT, exist_ok=True)
 open(os.path.join(OUT, 'manhattan.bin'), 'wb').write(bytes(blob))
 meta = {
-    'note': 'Built by tools/build_manhattan.py from NYC Open Data: Building Footprints 5zhs-2jue and Borough Boundaries gthc-hcne.',
+    'note': 'Built by tools/build_manhattan.py from NYC Open Data: Building Footprints 5zhs-2jue and Borough Boundaries gthc-hcne; ground from USGS 3DEP via the AWS Terrain Tiles.',
     'origin': [LAT0, LON0], 'tile': TILE, 'tiles': index, 'buildings': len(bld),
     'grid': {'x0': x0, 'z0': z0, 'cell': CELL, 'nx': nx, 'nz': nz, 'height': goff, 'kind': koff},
     'land': [[round(c, 1) for p in r for c in p] for r in land],
