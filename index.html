@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19i';
+const VERSION = 'v2026-11-19j';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -393,24 +393,24 @@ function buildTile(tile) {
 const CITY_MATS = [...wallMats, roofMat];
 for (const m of CITY_MATS) m.side = THREE.DoubleSide;
 // ---------- street names (NYC Open Data Centerline, built by tools/build_streets.py) ----------
-// A NYC DOT street name sign over the middle of each block, standing 12 m above the road and facing
-// the camera, kept big enough to read from swinging height. Only the LABELS blocks nearest the camera
-// get one of a fixed set of signs, so the cost is the same anywhere on the island.
-const STREETS = { names: null, seg: null, grid: new Map(), cell: 200, tex: new Map(), at: new V3(1e9, 0, 1e9) };
-const LABELS = 24, labelPool = [];
+// As in the city: a pole on each corner with two NYC DOT name blades, each blade running along its own
+// street, so swinging up an avenue you read the cross streets face on. Only the POSTS corners nearest
+// the camera get a pole; the blades grow with distance so they stay readable from swinging height.
+const STREETS = { names: null, c: null, grid: new Map(), cell: 200, tex: new Map(), at: new V3(1e9, 0, 1e9) };
+const POSTS = 14, posts = [];
 fetch('data/streets.json').then(r => r.json()).then(async d => {
   try { await document.fonts.load('600 46px Overpass'); } catch {}
-  for (let k = 0; k < d.seg.length; k += 5) {
-    const key = Math.floor(d.seg[k + 1] / STREETS.cell) * 100000 + Math.floor(d.seg[k + 2] / STREETS.cell);
+  for (let k = 0; k < d.corner.length; k += 6) {
+    const key = Math.floor(d.corner[k + 2] / STREETS.cell) * 100000 + Math.floor(d.corner[k + 3] / STREETS.cell);
     let a = STREETS.grid.get(key); if (!a) STREETS.grid.set(key, a = []); a.push(k);
   }
-  STREETS.names = d.names; STREETS.seg = d.seg;
+  STREETS.names = d.names; STREETS.c = d.corner;
 }).catch(e => console.warn('street names', e?.message));
-// The sign is NYC DOT's street name blade: green, a white border inset with rounded corners, white
+// The blade is NYC DOT's street name sign: green, a white border inset with rounded corners, white
 // mixed-case letters in a Highway Gothic face (Overpass), the direction and the suffix ('W', 'St',
 // 'Av') smaller, as on the city's signs.
 const SMALL = new Set(['N', 'S', 'E', 'W', 'St', 'Av', 'Pl', 'Dr', 'Blvd', 'Rd', 'Ter', 'Ln', 'Sq', 'Slip', 'Plaza', 'Pkwy', 'Hwy', 'Ct', 'Aly', 'Walk', 'Loop', 'Circle']);
-function streetTex(i) {   // the sign drawn once onto a canvas; the least recently used are let go past 120
+function streetTex(i) {   // the blade drawn once onto a canvas; the least recently used are let go past 120
   let t = STREETS.tex.get(i);
   if (t) { STREETS.tex.delete(i); STREETS.tex.set(i, t); return t; }
   const words = STREETS.names[i].split(' '), c = document.createElement('canvas'), g = c.getContext('2d');
@@ -425,34 +425,48 @@ function streetTex(i) {   // the sign drawn once onto a canvas; the least recent
   for (const q of parts) { g.font = font(q.px); g.fillText(q.w, x, 55); x += q.width + gap; }
   t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.userData.aspect = w / h;
   STREETS.tex.set(i, t);
-  if (STREETS.tex.size > 120) for (const [k0, t0] of STREETS.tex) { if (!labelPool.some(m => m.material.map === t0)) { t0.dispose(); STREETS.tex.delete(k0); break; } }
+  if (STREETS.tex.size > 120) for (const [k0, t0] of STREETS.tex) {
+    if (!posts.some(p => p.blades.some(b => b.mat.map === t0))) { t0.dispose(); STREETS.tex.delete(k0); break; }
+  }
   return t;
 }
-for (let i = 0; i < LABELS; i++) {
-  const m = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: true }));
-  m.center.set(.5, 0); m.visible = false; m.userData.seg = -1; scene.add(m); labelPool.push(m);
+const POLE_GEO = new THREE.CylinderGeometry(.14, .14, 1, 6).translate(0, .5, 0), BLADE_GEO = new THREE.PlaneGeometry(1, 1);
+const POLE_MAT = new THREE.MeshLambertMaterial({ color: 0x3d4a3f });
+for (let i = 0; i < POSTS; i++) {
+  const grp = new THREE.Group(), pole = new THREE.Mesh(POLE_GEO, POLE_MAT); grp.add(pole);
+  const blades = [0, 1].map(() => {   // a blade reads from both sides: two faces back to back
+    const mat = new THREE.MeshBasicMaterial({ transparent: true }), arm = new THREE.Group();
+    const front = new THREE.Mesh(BLADE_GEO, mat), back = new THREE.Mesh(BLADE_GEO, mat); back.rotation.y = Math.PI;
+    arm.add(front, back); grp.add(arm); return { arm, mat, aspect: 1 };
+  });
+  grp.visible = false; grp.userData.k = -1; scene.add(grp); posts.push({ grp, pole, blades });
 }
-function placeLabel(m, k) {
-  const s = STREETS.seg, x = s[k + 1], z = s[k + 2], t = streetTex(s[k]);
-  m.material.map = t; m.material.needsUpdate = true;
-  m.position.set(x, groundAt(x, z) + 12, z); m.userData.seg = k; m.userData.aspect = t.userData.aspect; m.visible = true;
+function placePost(p, k) {
+  const C = STREETS.c, x = C[k + 2], z = C[k + 3];
+  p.grp.position.set(x, groundAt(x, z), z); p.grp.userData.k = k; p.grp.visible = true;
+  for (let b = 0; b < 2; b++) {
+    const t = streetTex(C[k + b]), bl = p.blades[b];
+    bl.mat.map = t; bl.mat.needsUpdate = true; bl.aspect = t.userData.aspect;
+    bl.arm.rotation.y = -C[k + 4 + b] / 10 * Math.PI / 180;   // along its street
+  }
 }
 function updateStreets(x, z) {
-  if (!STREETS.seg) return;
-  if (Math.hypot(x - STREETS.at.x, z - STREETS.at.z) > 15) {   // re-pick the nearest blocks every 15 m
+  if (!STREETS.c) return;
+  if (Math.hypot(x - STREETS.at.x, z - STREETS.at.z) > 15) {   // re-pick the nearest corners every 15 m
     STREETS.at.set(x, 0, z);
-    const C = STREETS.cell, ci = Math.floor(x / C), cj = Math.floor(z / C), cand = [];
+    const G = STREETS.cell, ci = Math.floor(x / G), cj = Math.floor(z / G), cand = [];
     for (let i = ci - 2; i <= ci + 2; i++) for (let j = cj - 2; j <= cj + 2; j++)
-      for (const k of STREETS.grid.get(i * 100000 + j) || []) cand.push([(STREETS.seg[k + 1] - x) ** 2 + (STREETS.seg[k + 2] - z) ** 2, k]);
+      for (const k of STREETS.grid.get(i * 100000 + j) || []) cand.push([(STREETS.c[k + 2] - x) ** 2 + (STREETS.c[k + 3] - z) ** 2, k]);
     cand.sort((a, b) => a[0] - b[0]);
-    const keep = new Set(cand.slice(0, LABELS).map(c => c[1]));
-    const have = new Set(labelPool.map(m => m.userData.seg)), free = labelPool.filter(m => !keep.has(m.userData.seg));
-    for (const k of keep) if (!have.has(k)) { const m = free.pop(); if (m) placeLabel(m, k); }
-    for (const m of free) { m.visible = false; m.userData.seg = -1; }
+    const keep = new Set(cand.slice(0, POSTS).map(c => c[1]));
+    const have = new Set(posts.map(p => p.grp.userData.k)), free = posts.filter(p => !keep.has(p.grp.userData.k));
+    for (const k of keep) if (!have.has(k)) { const p = free.pop(); if (p) placePost(p, k); }
+    for (const p of free) { p.grp.visible = false; p.grp.userData.k = -1; }
   }
-  for (const m of labelPool) if (m.visible) {   // about 2 degrees tall on screen, never under 2.5 m; fades out far away
-    const d = m.position.distanceTo(camera.position), hgt = Math.max(2.5, d * .035);
-    m.scale.set(hgt * m.userData.aspect, hgt, 1); m.material.opacity = Math.max(0, Math.min(1, (320 - d) / 80));
+  for (const p of posts) if (p.grp.visible) {   // blades about 1.7 degrees tall on screen, at least 0.9 m
+    const d = p.grp.position.distanceTo(camera.position), h = Math.min(7, Math.max(.9, d * .03)), top = 5 + h * 2.3;
+    p.pole.scale.y = top;
+    p.blades.forEach((bl, b) => { bl.arm.scale.set(h * bl.aspect, h, 1); bl.arm.position.y = top - h * (.55 + b * 1.1); });
   }
 }
 
