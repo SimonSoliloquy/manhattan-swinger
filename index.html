@@ -109,7 +109,7 @@ h2 { margin: 0; font-size: 54px; line-height: 1; font-weight: 400; }
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 'v2026-11-19e';
+const VERSION = 'v2026-11-19f';
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
 const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -128,7 +128,7 @@ const T = {
   hookRange: 140, hookSpeed: 340, anchorRise: 24,
   pump: 7, redirect: 0.6,                 // speed added at the bottom of each arc; share of speed the rope would kill that goes into the swing
   reelIn: 24, reelOut: 14, minRope: 2.5, maxRope: 150,
-  flingUp: 7, flingFwd: 4,                // letting go near the top of an arc
+  flingUp: 7, flingFwd: 6, flingAim: 0.7,  // letting go: up near the top of an arc, and forward the way you face
   steerAir: 12, steerRope: 15, steerRoof: 2.4,
   wallGrav: 0.22, wallTime: 1.4, wallMinSpeed: 6, wallKick: 8,
   roofRun: 11, runGain: 6, jump: 9.5,     // run speed grows by up to runGain over the run
@@ -525,17 +525,23 @@ function release(i, quiet) {
   }
   if (h.state !== 'miss' || quiet) h.state = 'off';
 }
-function fling(h) {   // letting go near the top of an arc throws you forward and up
+function fling(h) {   // letting go throws you the way you face (Simon, 2026-11-19), and up near the top of an arc
   tC.subVectors(h.a, H.p).normalize();
   const k = 1 - Math.max(0, tC.y), v = H.v;
   if (v.y > -4) v.y += T.flingUp * k;
-  tD.set(v.x, 0, v.z); const l = tD.length(); if (l > 1) v.addScaledVector(tD, T.flingFwd * k / l);
+  // turn the swing's sideways or backward speed most of the way toward the facing direction, keeping the speed
+  tD.set(v.x, 0, v.z); const hs = tD.length();
+  tD.lerp(tA.copy(camDir).setY(0).normalize().multiplyScalar(hs), T.flingAim);
+  const l = tD.length(); if (l > .01) tD.multiplyScalar(hs / l);
+  v.x = tD.x; v.z = tD.z;
+  v.addScaledVector(tA.copy(camDir).setY(0).normalize(), T.flingFwd * (.5 + .5 * k));
 }
 
 // ---------- parkour moves ----------
 function jump() {
-  if (H.state === 'roof' || H.state === 'street') { H.v.y = T.jump; tA.set(H.v.x, 0, H.v.z); const l = tA.length(); if (l > .1) H.v.addScaledVector(tA, 1.5 / l); H.state = 'air'; SFX.jump(); return true; }
+  if (H.state === 'roof' || H.state === 'street') { H.v.y = T.jump; H.v.addScaledVector(H.heading, 1.5); H.state = 'air'; SFX.jump(); return true; }
   if (H.state === 'wall') { leaveSurface(); SFX.jump(); return true; }
+  if (hooks.some(h => h.state === 'on')) { letGo(); return true; }   // swinging: a jump lets go and throws you forward
   return false;
 }
 
